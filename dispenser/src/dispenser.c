@@ -2,6 +2,7 @@
 
 Horario horarios[MAX_HORARIOS];
 uint8_t cantidadHorarios = 0;
+#define TIEMPO_ENTRE_SOLICITUDES 10  // 10 segundos
 
 void servirComida(uint16_t gramosObjetivo) {
     float pesoInicial = ObtenerPesoPlato();
@@ -12,9 +13,9 @@ void servirComida(uint16_t gramosObjetivo) {
     sprintf(debugMsg, "Peso inicial: %.2fg\r\n", pesoInicial);
     uartWriteString(UART_USB, debugMsg);
     
-    activarMotor();
-    
-    do {
+    while(1) {
+        secuenciaDispensado();
+        
         pesoActual = ObtenerPesoPlato();
         float diferencia = pesoActual - pesoInicial;
         
@@ -31,12 +32,15 @@ void servirComida(uint16_t gramosObjetivo) {
         }
         
         delay(100);
-    } while(1);
+    }
     
     float pesoDispensador = ObtenerPesoDispensador();
     enviarPesos(pesoActual, pesoDispensador);
     
-    uartWriteString(UART_USB, "Esperando 1 minuto antes de siguiente verificaciÛn...\r\n");
+    // Limpiar buffer UART despu√©s de dispensar
+    limpiarBuffer();
+    
+    uartWriteString(UART_USB, "Esperando 1 minuto antes de siguiente verificaci√≥n...\r\n");
     delay(60000);
 }
 
@@ -47,7 +51,7 @@ void verificarHorarios() {
     for(int i = 0; i < cantidadHorarios; i++) {
         if(rtc.hour == horarios[i].hora && rtc.min == horarios[i].minuto) {
             servirComida(horarios[i].gramos);
-            break;
+            return;  // Salir despu√©s de dispensar
         }
     }
 }
@@ -55,7 +59,6 @@ void verificarHorarios() {
 int main(void) {
     boardInit();
     
-    // Inicializaciones de mÛdulos
     motorInit();
     loadcellInit();
     espCommInit();
@@ -64,16 +67,29 @@ int main(void) {
     gpioWrite(LEDB, OFF);
     mostrarHoraActual();
     
+    uint8_t contadorSegundos = 0;
+    
     while(1) {
-        solicitarHorarios();
-        if (recibirYMostrarHorarios()) {
-            gpioWrite(LEDB, ON);
-            float pesoPlato = ObtenerPesoPlato();
-            float pesoDispensador = ObtenerPesoDispensador() * 2.65;
-            enviarPesos(pesoPlato, pesoDispensador);
-            gpioWrite(LEDB, OFF);
+        contadorSegundos++;
+        
+        if (contadorSegundos >= TIEMPO_ENTRE_SOLICITUDES) {
+            // Limpiar buffer antes de solicitar
+            limpiarBuffer();
+            
+            mostrarHoraActual();
+            solicitarHorarios();
+            
+            if (recibirYMostrarHorarios()) {
+                gpioWrite(LEDB, ON);
+                float pesoPlato = ObtenerPesoPlato();
+                float pesoDispensador = ObtenerPesoDispensador() * 2.65;
+                enviarPesos(pesoPlato, pesoDispensador);
+                gpioWrite(LEDB, OFF);
+            }
+            
+            contadorSegundos = 0;
         }
-        mostrarHoraActual();
+        
         verificarHorarios();
         delay(1000);
     }
